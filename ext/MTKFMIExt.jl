@@ -465,8 +465,17 @@ mutable struct FMI2InstanceWrapper
     The FMU instance, if present, and `nothing` otherwise.
     """
     instance::Union{FMI.FMU2Component{FMI.FMU2}, Nothing}
+    """
+    Continuous state buffer pre-allocated to avoid simulation allocations.
+    """
     const states_buffer::Vector{FMI.fmi2Real}
+    """
+    Output buffer pre-allocated to avoid simulation allocations.
+    """
     const outputs_buffer::Vector{FMI.fmi2Real}
+    """
+    Return buffer caching state and output arrays to eliminate return vcat allocations.
+    """
     const res_buffer::Vector{FMI.fmi2Real}
 end
 
@@ -615,8 +624,17 @@ mutable struct FMI3InstanceWrapper
     The FMU instance, if present, and `nothing` otherwise.
     """
     instance::Union{FMI.FMU3Instance{FMI.FMU3}, Nothing}
+    """
+    Continuous state buffer pre-allocated to avoid simulation allocations.
+    """
     const states_buffer::Vector{FMI.fmi3Float64}
+    """
+    Output buffer pre-allocated to avoid simulation allocations.
+    """
     const outputs_buffer::Vector{FMI.fmi3Float64}
+    """
+    Return buffer caching state and output arrays to eliminate return vcat allocations.
+    """
     const res_buffer::Vector{FMI.fmi3Float64}
 end
 
