@@ -7,6 +7,7 @@ using DocStringExtensions
 import ModelingToolkit as MTK
 import SciMLBase
 import FMIImport as FMI
+using StaticArrays
 
 """
     $(TYPEDSIGNATURES)
@@ -140,8 +141,7 @@ function MTK.FMIComponent(
         # and some unfortunate circular dependency issues, ME FMUs use an array of
         # symbolics instead. This is also not worse off in performance
         # because the former approach would allocate anyway.
-        # TODO: Can we avoid an allocation here using static arrays?
-        __mtk_internal_u = copy(diffvars)
+        __mtk_internal_u = isempty(diffvars) ? Float64[] : SVector{length(diffvars)}(diffvars)
     elseif type == :CS
         # CS FMUs do their own independent integration in a periodic callback, so their
         # unknowns are discrete variables in the `ODESystem`. A default of `missing` allows
@@ -175,10 +175,7 @@ function MTK.FMIComponent(
         )
     )
     # create a symbolic variable for the input buffer
-    __mtk_internal_x = copy(inputs)
-    if isempty(__mtk_internal_x)
-        __mtk_internal_x = Float64[]
-    end
+    __mtk_internal_x = isempty(inputs) ? Float64[] : SVector{length(inputs)}(inputs)
 
     # parse the outputs of the FMU
     outputs = []
@@ -208,10 +205,7 @@ function MTK.FMIComponent(
         params, [], parameter_dependencies, defs; parameters = true
     )
     # create a symbolic variable for the parameter buffer
-    __mtk_internal_p = copy(params)
-    if isempty(__mtk_internal_p)
-        __mtk_internal_p = Float64[]
-    end
+    __mtk_internal_p = isempty(params) ? Float64[] : SVector{length(params)}(params)
 
     derivative_value_references = UInt32[value_references[var] for var in dervars]
     state_value_references = UInt32[value_references[var] for var in diffvars]
@@ -471,6 +465,9 @@ mutable struct FMI2InstanceWrapper
     The FMU instance, if present, and `nothing` otherwise.
     """
     instance::Union{FMI.FMU2Component{FMI.FMU2}, Nothing}
+    const states_buffer::Vector{FMI.fmi2Real}
+    const outputs_buffer::Vector{FMI.fmi2Real}
+    const res_buffer::Vector{FMI.fmi2Real}
 end
 
 """
@@ -479,7 +476,7 @@ end
 Create an `FMI2InstanceWrapper` with no instance.
 """
 function FMI2InstanceWrapper(fmu, ders, states, outputs, params, inputs, tolerance)
-    return FMI2InstanceWrapper(fmu, ders, states, outputs, params, inputs, tolerance, nothing)
+    return FMI2InstanceWrapper(fmu, ders, states, outputs, params, inputs, tolerance, nothing, zeros(FMI.fmi2Real, length(states)), zeros(FMI.fmi2Real, length(outputs)), zeros(FMI.fmi2Real, length(states) + length(outputs)))
 end
 
 Base.nameof(::FMI2InstanceWrapper) = :FMI2InstanceWrapper
@@ -618,6 +615,9 @@ mutable struct FMI3InstanceWrapper
     The FMU instance, if present, and `nothing` otherwise.
     """
     instance::Union{FMI.FMU3Instance{FMI.FMU3}, Nothing}
+    const states_buffer::Vector{FMI.fmi3Float64}
+    const outputs_buffer::Vector{FMI.fmi3Float64}
+    const res_buffer::Vector{FMI.fmi3Float64}
 end
 
 """
@@ -626,7 +626,7 @@ end
 Create an `FMI3InstanceWrapper` with no instance.
 """
 function FMI3InstanceWrapper(fmu, ders, states, outputs, params, inputs)
-    return FMI3InstanceWrapper(fmu, ders, states, outputs, params, inputs, nothing)
+    return FMI3InstanceWrapper(fmu, ders, states, outputs, params, inputs, nothing, zeros(FMI.fmi3Float64, length(states)), zeros(FMI.fmi3Float64, length(outputs)), zeros(FMI.fmi3Float64, length(states) + length(outputs)))
 end
 
 Base.nameof(::FMI3InstanceWrapper) = :FMI3InstanceWrapper
@@ -729,7 +729,7 @@ function reset_instance!(wrapper::FMI3InstanceWrapper)
 end
 
 @register_array_symbolic (fn::FMI2InstanceWrapper)(
-    states::Vector{<:Real}, inputs::Vector{<:Real}, params::Vector{<:Real}, t::Real
+    states::AbstractVector{<:Real}, inputs::AbstractVector{<:Real}, params::AbstractVector{<:Real}, t::Real
 ) begin
     size = (length(states) + length(fn.output_value_references),)
     eltype = eltype(states)
@@ -737,8 +737,8 @@ end
 end
 
 @register_array_symbolic (fn::FMI3InstanceWrapper)(
-    wrapper::FMI3InstanceWrapper, states::Vector{<:Real},
-    inputs::Vector{<:Real}, params::Vector{<:Real}, t::Real
+    wrapper::FMI3InstanceWrapper, states::AbstractVector{<:Real},
+    inputs::AbstractVector{<:Real}, params::AbstractVector{<:Real}, t::Real
 ) begin
     size = (length(states) + length(fn.output_value_references),)
     eltype = eltype(states)
@@ -757,10 +757,8 @@ function (wrapper::Union{FMI2InstanceWrapper, FMI3InstanceWrapper})(
     )
     instance = get_instance_ME!(wrapper, inputs, params, t)
 
-    # TODO: Find a way to do this without allocating. We can't pass a view to these
-    # functions.
-    states_buffer = zeros(length(states))
-    outputs_buffer = zeros(length(wrapper.output_value_references))
+    states_buffer = wrapper.states_buffer
+    outputs_buffer = wrapper.outputs_buffer
     # Defined in FMIBase.jl/src/eval.jl
     # Doesn't seem to be documented, but somehow this is the only way to
     # propagate inputs to the FMU consistently. I have no idea why.
@@ -774,7 +772,9 @@ function (wrapper::Union{FMI2InstanceWrapper, FMI3InstanceWrapper})(
         dx = states_buffer, dx_refs = wrapper.derivative_value_references,
         y = outputs_buffer, y_refs = wrapper.output_value_references
     )
-    return [states_buffer; outputs_buffer]
+    wrapper.res_buffer[1:length(states_buffer)] .= states_buffer
+    wrapper.res_buffer[length(states_buffer)+1:end] .= outputs_buffer
+    return wrapper.res_buffer
 end
 
 """
