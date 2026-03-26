@@ -140,6 +140,7 @@ function MTK.FMIComponent(
         # and some unfortunate circular dependency issues, ME FMUs use an array of
         # symbolics instead. This is also not worse off in performance
         # because the former approach would allocate anyway.
+        # TODO: Can we avoid an allocation here using static arrays?
         __mtk_internal_u = copy(diffvars)
     elseif type == :CS
         # CS FMUs do their own independent integration in a periodic callback, so their
