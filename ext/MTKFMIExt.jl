@@ -7,7 +7,6 @@ using DocStringExtensions
 import ModelingToolkit as MTK
 import SciMLBase
 import FMIImport as FMI
-using StaticArrays
 
 """
     $(TYPEDSIGNATURES)
@@ -141,7 +140,7 @@ function MTK.FMIComponent(
         # and some unfortunate circular dependency issues, ME FMUs use an array of
         # symbolics instead. This is also not worse off in performance
         # because the former approach would allocate anyway.
-        __mtk_internal_u = isempty(diffvars) ? Float64[] : SVector{length(diffvars)}(diffvars)
+        __mtk_internal_u = copy(diffvars)
     elseif type == :CS
         # CS FMUs do their own independent integration in a periodic callback, so their
         # unknowns are discrete variables in the `ODESystem`. A default of `missing` allows
@@ -175,7 +174,10 @@ function MTK.FMIComponent(
         )
     )
     # create a symbolic variable for the input buffer
-    __mtk_internal_x = isempty(inputs) ? Float64[] : SVector{length(inputs)}(inputs)
+    __mtk_internal_x = copy(inputs)
+    if isempty(__mtk_internal_x)
+        __mtk_internal_x = Float64[]
+    end
 
     # parse the outputs of the FMU
     outputs = []
@@ -205,7 +207,10 @@ function MTK.FMIComponent(
         params, [], parameter_dependencies, defs; parameters = true
     )
     # create a symbolic variable for the parameter buffer
-    __mtk_internal_p = isempty(params) ? Float64[] : SVector{length(params)}(params)
+    __mtk_internal_p = copy(params)
+    if isempty(__mtk_internal_p)
+        __mtk_internal_p = Float64[]
+    end
 
     derivative_value_references = UInt32[value_references[var] for var in dervars]
     state_value_references = UInt32[value_references[var] for var in diffvars]
@@ -747,7 +752,7 @@ function reset_instance!(wrapper::FMI3InstanceWrapper)
 end
 
 @register_array_symbolic (fn::FMI2InstanceWrapper)(
-    states::AbstractVector{<:Real}, inputs::AbstractVector{<:Real}, params::AbstractVector{<:Real}, t::Real
+    states::Vector{<:Real}, inputs::Vector{<:Real}, params::Vector{<:Real}, t::Real
 ) begin
     size = (length(states) + length(fn.output_value_references),)
     eltype = eltype(states)
@@ -755,8 +760,8 @@ end
 end
 
 @register_array_symbolic (fn::FMI3InstanceWrapper)(
-    wrapper::FMI3InstanceWrapper, states::AbstractVector{<:Real},
-    inputs::AbstractVector{<:Real}, params::AbstractVector{<:Real}, t::Real
+    wrapper::FMI3InstanceWrapper, states::Vector{<:Real},
+    inputs::Vector{<:Real}, params::Vector{<:Real}, t::Real
 ) begin
     size = (length(states) + length(fn.output_value_references),)
     eltype = eltype(states)
@@ -777,6 +782,8 @@ function (wrapper::Union{FMI2InstanceWrapper, FMI3InstanceWrapper})(
 
     states_buffer = wrapper.states_buffer
     outputs_buffer = wrapper.outputs_buffer
+    #buffer size matches
+    @assert length(states_buffer) == length(states)
     # Defined in FMIBase.jl/src/eval.jl
     # Doesn't seem to be documented, but somehow this is the only way to
     # propagate inputs to the FMU consistently. I have no idea why.
